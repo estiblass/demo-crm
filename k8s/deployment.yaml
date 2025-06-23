@@ -2,10 +2,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: demo-crm
-  labels:
-    app: demo-crm
 spec:
-  replicas: 1  # ← שונה מ-2 ל-1
+  replicas: 1
   selector:
     matchLabels:
       app: demo-crm
@@ -16,7 +14,7 @@ spec:
     spec:
       containers:
       - name: demo-crm
-        image: IMAGE_PLACEHOLDER
+        image: ghcr.io/estiblass/demo-crm:build-20250623-212c526
         ports:
         - containerPort: 3000
         readinessProbe:
