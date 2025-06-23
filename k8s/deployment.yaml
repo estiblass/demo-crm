@@ -12,9 +12,11 @@ spec:
       labels:
         app: demo-crm
     spec:
+      imagePullSecrets:
+      - name: ghcr-secret
       containers:
       - name: demo-crm
-        image: ghcr.io/estiblass/demo-crm:build-20250623-0480000
+        image: IMAGE_PLACEHOLDER
         ports:
         - containerPort: 3000
         readinessProbe:
