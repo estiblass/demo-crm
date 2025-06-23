@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: demo-crm
-        image: ghcr.io/estiblass/demo-crm:build-20250623-212c526
+        image: ghcr.io/estiblass/demo-crm:build-20250623-0480000
         ports:
         - containerPort: 3000
         readinessProbe:
