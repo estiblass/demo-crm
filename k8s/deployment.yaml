@@ -5,7 +5,7 @@ metadata:
   labels:
     app: demo-crm
 spec:
-  replicas: 2
+  replicas: 1  # ← שונה מ-2 ל-1
   selector:
     matchLabels:
       app: demo-crm
