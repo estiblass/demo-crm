@@ -2,10 +2,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: demo-crm
-  labels:
-    app: demo-crm
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: demo-crm
@@ -16,6 +14,6 @@ spec:
     spec:
       containers:
         - name: demo-crm
-          image: demo-crm:latest
+          image: tziviblau/demo-crm:10
           ports:
             - containerPort: 3000
