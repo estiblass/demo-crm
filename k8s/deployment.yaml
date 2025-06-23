@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: demo-crm
-        image: ghcr.io/esti563/demo-crm:latest
+        image: IMAGE_PLACEHOLDER
         ports:
         - containerPort: 3000
         readinessProbe:
