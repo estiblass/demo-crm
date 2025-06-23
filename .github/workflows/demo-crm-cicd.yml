@@ -24,45 +24,45 @@ jobs:
         echo "tag=${TAG}" >> $GITHUB_OUTPUT
         echo "Generated tag: ${TAG}"
 
-    - name: Log in to GHCR
+    - name: Log in to GitHub Container Registry
       uses: docker/login-action@v3
       with:
         registry: ${{ env.REGISTRY }}
         username: ${{ github.actor }}
         password: ${{ secrets.GHCR_TOKEN }}
 
-    - name: Pull, retag and push Demo CRM image
+    - name: Pull, retag, and push Demo CRM image
       run: |
         TAG="${{ steps.generate-tag.outputs.tag }}"
         REPO_OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
         IMAGE="${{ env.REGISTRY }}/${REPO_OWNER_LOWER}/${{ env.IMAGE_NAME }}"
 
-        echo "Pulling source image..."
+        echo "Pulling original image..."
         docker pull pwstaging/demo-crm:latest
 
         echo "Retagging..."
         docker tag pwstaging/demo-crm:latest ${IMAGE}:${TAG}
         docker tag pwstaging/demo-crm:latest ${IMAGE}:latest
 
-        echo "Pushing..."
+        echo "Pushing to GHCR..."
         docker push ${IMAGE}:${TAG}
         docker push ${IMAGE}:latest
 
-    - name: Install kind and create cluster
+    - name: Install kind and create test cluster
       run: |
         curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
         chmod +x ./kind
         sudo mv ./kind /usr/local/bin/kind
         kind create cluster --wait 300s
 
-    - name: Prepare deployment with updated image
+    - name: Update deployment.yaml with correct image
       run: |
         TAG="${{ steps.generate-tag.outputs.tag }}"
         REPO_OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
         IMAGE="ghcr.io/${REPO_OWNER_LOWER}/${{ env.IMAGE_NAME }}:${TAG}"
         sed -i "s|IMAGE_PLACEHOLDER|${IMAGE}|g" k8s/deployment.yaml
 
-    - name: Apply deployment to cluster
+    - name: Apply Kubernetes deployment
       run: |
         kubectl apply -f k8s/deployment.yaml
 
@@ -70,21 +70,19 @@ jobs:
       run: |
         kubectl rollout status deployment/demo-crm --timeout=300s
 
-    - name: Debug if rollout fails
+    - name: Debug info if rollout fails
       if: failure()
       run: |
-        echo "🔍 Deployment status:"
-        kubectl get pods -l app=demo-crm -o wide
-        echo ""
-        echo "🔍 Describing pods:"
+        echo "❌ Rollout failed. Debug info:"
+        kubectl get pods -o wide
         kubectl describe pods -l app=demo-crm
-        echo ""
-        echo "🔍 Last 30 log lines:"
-        kubectl logs -l app=demo-crm --tail=30 || true
+        kubectl logs -l app=demo-crm --tail=50 || true
 
     - name: Final summary
       run: |
         TAG="${{ steps.generate-tag.outputs.tag }}"
         REPO_OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+        echo ""
         echo "✅ Image pushed: ghcr.io/${REPO_OWNER_LOWER}/${{ env.IMAGE_NAME }}:${TAG}"
         echo "📦 Registry URL: https://github.com/${{ github.repository }}/pkgs/container/${{ env.IMAGE_NAME }}"
+        echo "🧪 Deployment tested on ephemeral cluster"
