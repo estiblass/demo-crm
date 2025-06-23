@@ -1,83 +1,90 @@
-name: Demo CRM CI/CD Pipeline
+name: Demo CRM CI/CD Pipeline (GHCR)
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: demo-crm
 
 jobs:
-  build-and-deploy:
+  ci-cd-pipeline:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-      - name: Set environment flags
-        run: |
-          echo "DOCKERHUB_ENABLED=$([[ -n '${{ secrets.DOCKERHUB_USERNAME }}' && -n '${{ secrets.DOCKERHUB_TOKEN }}' ]] && echo true || echo false)" >> $GITHUB_ENV
-          echo "GHCR_ENABLED=$([[ -n '${{ secrets.GHCR_TOKEN }}' ]] && echo true || echo false)" >> $GITHUB_ENV
+    - name: Generate image tag
+      id: generate-tag
+      run: |
+        TAG="build-$(date +%Y%m%d)-${GITHUB_SHA:0:7}"
+        echo "tag=${TAG}" >> $GITHUB_OUTPUT
+        echo "Generated tag: ${TAG}"
 
-      - name: Log in to Docker Hub
-        if: env.DOCKERHUB_ENABLED == 'true'
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+    - name: Log in to GHCR
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GHCR_TOKEN }}
 
-      - name: Log in to GitHub Container Registry
-        if: env.GHCR_ENABLED == 'true'
-        uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GHCR_TOKEN }}
+    - name: Pull, retag and push Demo CRM image
+      run: |
+        TAG="${{ steps.generate-tag.outputs.tag }}"
+        REPO_OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+        IMAGE="${{ env.REGISTRY }}/${REPO_OWNER_LOWER}/${{ env.IMAGE_NAME }}"
 
-      - name: Pull demo-crm base image
-        run: docker pull pwstaging/demo-crm:latest
+        echo "Pulling source image..."
+        docker pull pwstaging/demo-crm:latest
 
-      - name: Retag image
-        run: |
-          TAG=demo-crm:${{ github.run_number }}
-          if [ "${{ env.DOCKERHUB_ENABLED }}" == "true" ]; then
-            docker tag pwstaging/demo-crm:latest ${{ secrets.DOCKERHUB_USERNAME }}/$TAG
-          else
-            docker tag pwstaging/demo-crm:latest ghcr.io/${{ github.repository_owner }}/$TAG
-          fi
+        echo "Retagging..."
+        docker tag pwstaging/demo-crm:latest ${IMAGE}:${TAG}
+        docker tag pwstaging/demo-crm:latest ${IMAGE}:latest
 
-      - name: Push image
-        run: |
-          TAG=demo-crm:${{ github.run_number }}
-          if [ "${{ env.DOCKERHUB_ENABLED }}" == "true" ]; then
-            docker push ${{ secrets.DOCKERHUB_USERNAME }}/$TAG
-          else
-            docker push ghcr.io/${{ github.repository_owner }}/$TAG
-          fi
+        echo "Pushing..."
+        docker push ${IMAGE}:${TAG}
+        docker push ${IMAGE}:latest
 
-      - name: Set up kind cluster
-        uses: helm/kind-action@v1.5.0
+    - name: Install kind and create cluster
+      run: |
+        curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+        chmod +x ./kind
+        sudo mv ./kind /usr/local/bin/kind
+        kind create cluster --wait 300s
 
-      - name: Deploy to kind cluster
-        run: |
-          kubectl apply -f k8s/deployment.yaml
-          TAG=demo-crm:${{ github.run_number }}
-          if [ "${{ env.DOCKERHUB_ENABLED }}" == "true" ]; then
-            kubectl set image deployment/demo-crm demo-crm=${{ secrets.DOCKERHUB_USERNAME }}/$TAG
-          else
-            kubectl set image deployment/demo-crm demo-crm=ghcr.io/${{ github.repository_owner }}/$TAG
-          fi
+    - name: Prepare deployment with updated image
+      run: |
+        TAG="${{ steps.generate-tag.outputs.tag }}"
+        REPO_OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+        IMAGE="ghcr.io/${REPO_OWNER_LOWER}/${{ env.IMAGE_NAME }}:${TAG}"
+        sed -i "s|IMAGE_PLACEHOLDER|${IMAGE}|g" k8s/deployment.yaml
 
-      - name: Wait for rollout
-        run: kubectl rollout status deployment/demo-crm --timeout=120s
+    - name: Apply deployment to cluster
+      run: |
+        kubectl apply -f k8s/deployment.yaml
 
-      - name: Verify app is running
-        run: |
-          POD=$(kubectl get pods -l app=demo-crm -o jsonpath='{.items[0].metadata.name}')
-          kubectl wait --for=condition=Ready pod/$POD --timeout=60s
-          kubectl port-forward $POD 3000:3000 &
-          sleep 10
-          curl --fail http://localhost:3000 || exit 1
+    - name: Wait for rollout to complete
+      run: |
+        kubectl rollout status deployment/demo-crm --timeout=300s
 
-      - name: Cleanup cluster
-        if: always()
-        run: kind delete cluster
+    - name: Debug if rollout fails
+      if: failure()
+      run: |
+        echo "🔍 Deployment status:"
+        kubectl get pods -l app=demo-crm -o wide
+        echo ""
+        echo "🔍 Describing pods:"
+        kubectl describe pods -l app=demo-crm
+        echo ""
+        echo "🔍 Last 30 log lines:"
+        kubectl logs -l app=demo-crm --tail=30 || true
+
+    - name: Final summary
+      run: |
+        TAG="${{ steps.generate-tag.outputs.tag }}"
+        REPO_OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+        echo "✅ Image pushed: ghcr.io/${REPO_OWNER_LOWER}/${{ env.IMAGE_NAME }}:${TAG}"
+        echo "📦 Registry URL: https://github.com/${{ github.repository }}/pkgs/container/${{ env.IMAGE_NAME }}"
