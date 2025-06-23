@@ -12,77 +12,82 @@ env:
 jobs:
   ci-cd-pipeline:
     runs-on: ubuntu-latest
-
+    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-
+      
     - name: Generate image tag
       id: generate-tag
       run: |
         TAG="build-$(date +%Y%m%d)-${GITHUB_SHA:0:7}"
         echo "tag=${TAG}" >> $GITHUB_OUTPUT
-        echo "Generated tag: ${TAG}"
-
+        
     - name: Log in to GitHub Container Registry
       uses: docker/login-action@v3
       with:
         registry: ${{ env.REGISTRY }}
         username: ${{ github.actor }}
         password: ${{ secrets.GHCR_TOKEN }}
-
-    - name: Pull, retag, and push Demo CRM image
+        
+    - name: Pull, retag and push Demo CRM image
       run: |
         TAG="${{ steps.generate-tag.outputs.tag }}"
         REPO_OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
         IMAGE="${{ env.REGISTRY }}/${REPO_OWNER_LOWER}/${{ env.IMAGE_NAME }}"
-
-        echo "Pulling original image..."
+        
         docker pull pwstaging/demo-crm:latest
-
-        echo "Retagging..."
         docker tag pwstaging/demo-crm:latest ${IMAGE}:${TAG}
         docker tag pwstaging/demo-crm:latest ${IMAGE}:latest
-
-        echo "Pushing to GHCR..."
+        
         docker push ${IMAGE}:${TAG}
         docker push ${IMAGE}:latest
 
-    - name: Install kind and create test cluster
+    - name: Create kind cluster for testing
       run: |
         curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
         chmod +x ./kind
         sudo mv ./kind /usr/local/bin/kind
         kind create cluster --wait 300s
 
-    - name: Update deployment.yaml with correct image
+    - name: Prepare and test deployment
       run: |
         TAG="${{ steps.generate-tag.outputs.tag }}"
         REPO_OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-        IMAGE="ghcr.io/${REPO_OWNER_LOWER}/${{ env.IMAGE_NAME }}:${TAG}"
+        IMAGE="${{ env.REGISTRY }}/${REPO_OWNER_LOWER}/${{ env.IMAGE_NAME }}:${TAG}"
+
         sed -i "s|IMAGE_PLACEHOLDER|${IMAGE}|g" k8s/deployment.yaml
-
-    - name: Apply Kubernetes deployment
-      run: |
         kubectl apply -f k8s/deployment.yaml
-
-    - name: Wait for rollout to complete
-      run: |
         kubectl rollout status deployment/demo-crm --timeout=300s
 
-    - name: Debug info if rollout fails
+    - name: Debug if rollout fails
       if: failure()
       run: |
-        echo "❌ Rollout failed. Debug info:"
+        echo "=== DEBUG: Deployment Failed ==="
         kubectl get pods -o wide
-        kubectl describe pods -l app=demo-crm
+        kubectl describe pod -l app=demo-crm || true
         kubectl logs -l app=demo-crm --tail=50 || true
 
-    - name: Final summary
+    - name: Port-forward and test application
+      run: |
+        kubectl port-forward deployment/demo-crm 3000:3000 &
+        sleep 15
+        if curl -f http://localhost:3000/; then
+          echo "✅ Application is up!"
+        else
+          echo "❌ Application test failed"
+          exit 1
+        fi
+
+    - name: Show manual deployment instructions
       run: |
         TAG="${{ steps.generate-tag.outputs.tag }}"
         REPO_OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
         echo ""
-        echo "✅ Image pushed: ghcr.io/${REPO_OWNER_LOWER}/${{ env.IMAGE_NAME }}:${TAG}"
-        echo "📦 Registry URL: https://github.com/${{ github.repository }}/pkgs/container/${{ env.IMAGE_NAME }}"
-        echo "🧪 Deployment tested on ephemeral cluster"
+        echo "=== Manual Deployment to Killercoda ==="
+        echo "1. git clone https://github.com/${{ github.repository }}.git"
+        echo "2. cd demo-crm"
+        echo "3. sed -i 's|IMAGE_PLACEHOLDER|ghcr.io/${REPO_OWNER_LOWER}/${{ env.IMAGE_NAME }}:${TAG}|g' k8s/deployment.yaml"
+        echo "4. kubectl apply -f k8s/deployment.yaml"
+        echo "5. kubectl wait --for=condition=available deployment/demo-crm --timeout=300s"
+        echo "6. kubectl port-forward --address 0.0.0.0 deployment/demo-crm 3000:3000"
