@@ -15,7 +15,7 @@ spec:
         app: demo-crm
     spec:
       containers:
-      - name: demo-crm
-        image: IMAGE_PLACEHOLDER
-        ports:
-        - containerPort: 3000
+        - name: demo-crm
+          image: demo-crm:latest
+          ports:
+            - containerPort: 3000
