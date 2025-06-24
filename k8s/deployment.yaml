@@ -2,6 +2,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: demo-crm
+  labels:
+    app: demo-crm
 spec:
   replicas: 1
   selector:
@@ -12,8 +14,6 @@ spec:
       labels:
         app: demo-crm
     spec:
-      imagePullSecrets:
-      - name: ghcr-secret
       containers:
       - name: demo-crm
         image: IMAGE_PLACEHOLDER
@@ -25,3 +25,5 @@ spec:
             port: 3000
           initialDelaySeconds: 10
           periodSeconds: 5
+      imagePullSecrets:
+      - name: ghcr-secret
