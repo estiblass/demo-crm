@@ -1,3 +1,109 @@
+name: Demo CRM CI/CD Pipeline (GHCR)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: demo-crm
+
+jobs:
+  ci-cd-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Generate image tag
+      id: generate-tag
+      run: |
+        TAG="build-$(date +%Y%m%d)-${GITHUB_SHA:0:7}"
+        echo "tag=${TAG}" >> $GITHUB_OUTPUT
+        echo "Generated tag: ${TAG}"
+
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GHCR_TOKEN }}
+
+    - name: Pull, retag and push image to GHCR
+      run: |
+        TAG="${{ steps.generate-tag.outputs.tag }}"
+        IMAGE="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
+
+        echo "Pulling source image..."
+        docker pull pwstaging/demo-crm:latest
+
+        echo "Tagging image..."
+        docker tag pwstaging/demo-crm:latest ${IMAGE}:${TAG}
+        docker tag pwstaging/demo-crm:latest ${IMAGE}:latest
+
+        echo "Pushing to GHCR..."
+        docker push ${IMAGE}:${TAG}
+        docker push ${IMAGE}:latest
+
+    - name: Create kind cluster
+      run: |
+        curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+        chmod +x ./kind
+        sudo mv ./kind /usr/local/bin/kind
+        kind create cluster --wait 300s
+
+    - name: Apply deployment to kind cluster
+      run: |
+        TAG="${{ steps.generate-tag.outputs.tag }}"
+        REPO_OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+        IMAGE="${{ env.REGISTRY }}/${REPO_OWNER_LOWER}/${{ env.IMAGE_NAME }}:${TAG}"
+
+        echo "Replacing image in deployment.yaml with: ${IMAGE}"
+        sed -i "s|IMAGE_PLACEHOLDER|${IMAGE}|g" k8s/deployment.yaml
+
+        kubectl apply -f k8s/deployment.yaml
+        kubectl rollout status deployment/demo-crm --timeout=300s
+
+    - name: Debug Failed Deployment
+      if: failure()
+      run: |
+        echo "========= DEBUGGING DEPLOYMENT ========="
+        kubectl get pods
+        kubectl describe deployment demo-crm
+        kubectl describe pods
+        POD=$(kubectl get pods --no-headers -o custom-columns=":metadata.name" | head -n 1)
+        kubectl logs $POD
+
+    - name: Port forward and test
+      run: |
+        echo "Testing application response..."
+        kubectl port-forward deployment/demo-crm 3000:3000 &
+        sleep 15
+        if curl -f http://localhost:3000/; then
+          echo "✅ Application is up"
+        else
+          echo "❌ Application failed to respond"
+          exit 1
+        fi
+
+    - name: Done – Manual Deployment Instructions
+      run: |
+        TAG="${{ steps.generate-tag.outputs.tag }}"
+        REPO_OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+        IMAGE="${{ env.REGISTRY }}/${REPO_OWNER_LOWER}/${{ env.IMAGE_NAME }}:${TAG}"
+
+        echo "=== Deployment Successful ==="
+        echo "Image available at:"
+        echo "  $IMAGE"
+        echo ""
+        echo "To deploy manually in Killercoda:"
+        echo "1. git clone https://github.com/${{ github.repository }}.git"
+        echo "2. cd demo-crm"
+        echo "3. sed -i 's|IMAGE_PLACEHOLDER|${IMAGE}|g' k8s/deployment.yaml"
+        echo "4. kubectl apply -f k8s/deployment.yaml"
+        echo "5. kubectl port-forward deployment/demo-crm 3000:3000"
 name: Deploy to Kubernetes
 
 on:
