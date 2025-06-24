@@ -5,7 +5,7 @@ metadata:
   labels:
     app: demo-crm
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: demo-crm
@@ -16,6 +16,6 @@ spec:
     spec:
       containers:
       - name: demo-crm
-        image: estiblass/demo-crm:latest
+        image: IMAGE_PLACEHOLDER  # זה מה שחשוב!
         ports:
         - containerPort: 3000
